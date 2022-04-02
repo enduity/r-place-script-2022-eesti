@@ -1,3 +1,4 @@
+import io
 import os
 import os.path
 import math
@@ -11,6 +12,7 @@ from requests.auth import HTTPBasicAuth
 from dotenv import load_dotenv
 from PIL import ImageColor
 from PIL import Image
+from packaging import version
 import random
 
 # set verbose mode to increase output (messy)
@@ -59,7 +61,7 @@ name_map = {
     27: "Black",
     29: "Grey",
     30: "Light Grey",
-    32: "White",
+    31: "White",
 }
 
 # color palette
@@ -78,6 +80,7 @@ image_height = None
 # first_run = True
 first_run_counter = 0
 
+
 # function to convert rgb tuple to hexadecimal string
 def rgb_to_hex(rgb):
     return ("#%02x%02x%02x" % rgb).upper()
@@ -93,6 +96,10 @@ def color_id_to_name(color_id):
 # function to find the closest rgb color from palette to a target rgb color
 def closest_color(target_rgb, rgb_colors_array_in):
     r, g, b = target_rgb
+    if (r == 69) and (g == 42) and (b == 0):
+        return (69, 42, 0)
+    if (r == 69) and (g == 41) and (b == 1):
+        return (69, 42, 0)
     color_diffs = []
     for color in rgb_colors_array_in:
         cr, cg, cb = color
@@ -242,43 +249,28 @@ def get_board(access_token_in):
 
 
 def get_unset_pixel(boardimg, x, y):
-    pixel_x_start = int(os.getenv("ENV_DRAW_X_START"))
-    pixel_y_start = int(os.getenv("ENV_DRAW_Y_START"))
+    pixel_x_start = 0
+    pixel_y_start = 0
     pix2 = Image.open(boardimg).convert("RGB").load()
     while True:
-        x += 1
-
         if x >= image_width:
             y += 1
             x = 0
 
         if y >= image_height:
+            new_rgb = (69, 42, 0)
             break
         if verbose:
             print(x + pixel_x_start, y + pixel_y_start)
             print(x, y, "boardimg", image_width, image_height)
         target_rgb = pix[x, y]
+
         new_rgb = closest_color(target_rgb, rgb_colors_array)
-        if pix2[x + pixel_x_start, y + pixel_y_start] != new_rgb and verbose:
-            print(
-                pix2[x + pixel_x_start, y + pixel_y_start],
-                new_rgb,
-                new_rgb != (69, 42, 0),
-                pix2[x, y] != new_rgb,
-            )
+        if pix2[x + pixel_x_start, y + pixel_y_start] != new_rgb:
             if new_rgb != (69, 42, 0):
-                print(
-                    "Different Pixel found at:",
-                    x + pixel_x_start,
-                    y + pixel_y_start,
-                    "With Color:",
-                    pix2[x + pixel_x_start, y + pixel_y_start],
-                    "Replacing with:",
-                    new_rgb,
-                )
                 break
-            else:
-                print("TransparrentPixel")
+
+        x += 1
     return x, y, new_rgb
 
 
@@ -294,26 +286,42 @@ def init_rgb_colors_array():
         print("available colors for palette (rgb): ", rgb_colors_array)
 
 
-# method to read the input image.jpg file
-def load_image():
+def load_image_url(url):
     global pix
     global image_width
     global image_height
+    global image_loaded
     # read and load the image to draw and get its dimensions
-    image_path = os.path.join(os.path.abspath(os.getcwd()), "image.jpg")
-    im = Image.open(image_path)
-    pix = im.load()
-    print(
-        "image size: ", im.size
-    )  # Get the width and height of the image for iterating over
-    image_width, image_height = im.size
+
+    try:
+        im_resp = requests.get(url, stream=True, timeout=60)
+    except requests.exceptions.ReadTimeout:
+        print('Image download timed out')
+        print('Trying again in 1 minute. After 10 tries, the script will stop automatically.')
+    else:
+        if im_resp.status_code != 200:
+            print('HTTP', im_resp.status_code)
+            print('Image download failed')
+            print('Trying again in 1 minute. After 10 tries, the script will stop automatically.')
+
+            return 1
+        else:
+            im = Image.open(im_resp.raw).convert("RGB")
+            pix = im.load()
+            print(
+                "image size: ", im.size
+            )  # Get the width and height of the image for iterating over
+            image_width, image_height = im.size
+            image_loaded = True
+            return 0
 
 
 # task to draw the input image
-def task(credentials_index):
+def task(credentials_index, image_e):
     # whether image should keep drawing itself
     repeat_forever = True
-
+    last_time_scanned_image = time.time()
+    image_is_loaded = image_e.wait()
     while True:
         # try:
         # global variables for script
@@ -322,25 +330,14 @@ def task(credentials_index):
         # note: reddit limits us to place 1 pixel every 5 minutes, so I am setting it to
         # 5 minutes and 30 seconds per pixel
         # pixel_place_frequency = 330
-        pixel_place_frequency = 330
+        pixel_place_frequency = 0
 
         # pixel drawing preferences
-        pixel_x_start = int(os.getenv("ENV_DRAW_X_START"))
-        pixel_y_start = int(os.getenv("ENV_DRAW_Y_START"))
+        pixel_x_start = 0
+        pixel_y_start = 0
 
-        try:
-            # current pixel row and pixel column being drawn
-            current_r = int(json.loads(os.getenv("ENV_R_START"))[credentials_index])
-            current_c = int(json.loads(os.getenv("ENV_C_START"))[credentials_index])
-        except IndexError:
-            print(
-                "Array length error: are you sure you have an ENV_R_START and ENV_C_START item for every account?\n",
-                "Example for 5 accounts:\n",
-                'ENV_R_START=\'["0","5","6","7","9"]\'\n',
-                'ENV_C_START=\'["0","5","6","8","9"]\'\n',
-                "Note: There can be duplicate entries, but every array must have the same amount of items.",
-            )
-            exit(1)
+        current_r = 0
+        current_c = 0
 
         # string for time until next pixel is drawn
         update_str = ""
@@ -368,7 +365,7 @@ def task(credentials_index):
             new_update_str = (
                 str(time_until_next_draw) + " seconds until next pixel is drawn"
             )
-            if update_str != new_update_str and time_until_next_draw % 10 == 0:
+            if update_str != new_update_str and time_until_next_draw % 30 == 0:
                 update_str = new_update_str
                 print(
                     "-------Thread #"
@@ -465,14 +462,27 @@ def task(credentials_index):
                 # target_rgb = pix[current_r, current_c]
 
                 # get current pixel position from input image and replacement color
+                print(
+                    "-------Thread #"
+                    + str(credentials_index)
+                    + "-------"
+                )
                 current_r, current_c, new_rgb = get_unset_pixel(
                     get_board(access_tokens[credentials_index]),
                     current_r,
                     current_c,
                 )
-
+                if new_rgb == (69, 42, 0):
+                    print(
+                        "--------Thread #"
+                        + str(credentials_index)
+                        + "--------\n"
+                        + "no discrepancies found\n"
+                    )
+                    break
                 # get converted color
                 new_rgb_hex = rgb_to_hex(new_rgb)
+
                 pixel_color_index = color_map[new_rgb_hex]
 
                 # draw the pixel onto r/place
@@ -486,12 +496,12 @@ def task(credentials_index):
                 current_r += 1
 
                 # go back to first column when reached end of a row while drawing
-                if current_r >= image_width:
+                if current_r >= (image_width-1):
                     current_r = 0
                     current_c += 1
 
                 # exit when all pixels drawn
-                if current_c >= image_height:
+                if current_c >= (image_height-1):
                     print(
                         "--------Thread #"
                         + str(credentials_index)
@@ -509,13 +519,59 @@ def task(credentials_index):
 
         if not repeat_forever:
             break
+        else:
+            time_scanned_image = time.time()
+            if (last_time_scanned_image - time_scanned_image) < 20:
+                time.sleep(20)
+            last_time_scanned_image = time_scanned_image
+
+
+def image_updater(image_e):
+    url = 'https://reddit.enduity.me/update.php'
+    status = "continue"
+    global image_version
+    tries = 0
+    while True:
+        if tries >= 10:
+            print('Failed to update image after 10 tries. Exiting.')
+            os._exit(1)
+        try:
+            resp = requests.get(url, timeout=5)
+        except requests.exceptions.ReadTimeout:
+            print('Request timed out')
+            print('Trying again in 1 minute. After 10 tries, the script will stop automatically.')
+            status = "retry"
+        else:
+            if resp.status_code != 200:
+                print('HTTP', resp.status_code)
+                print('Request failed')
+                print('Trying again in 1 minute. After 10 tries, the script will stop automatically.')
+                status = "retry"
+            else:
+                data = resp.json()
+        if status == "continue":
+            if version.parse(data["version"]) > version.parse(image_version):
+                image_version = data["version"]
+                print('New image version available. Downloading.')
+                result = load_image_url("https://reddit.enduity.me/images/" + data["filename"])
+                if result:
+                    tries += 1
+                    time.sleep(60)
+                else:
+                    tries = 0
+                    image_e.set()
+                    time.sleep(60)
+        else:
+            tries += 1
+            time.sleep(60)
+
 
 
 # get color palette
 init_rgb_colors_array()
 
-# load the pixels for the input image
-load_image()
+image_version = "0.0.1"
+image_event = threading.Event()
 
 # get number of concurrent threads to start
 num_credentials = len(json.loads(os.getenv("ENV_PLACE_USERNAME")))
@@ -527,10 +583,12 @@ else:
     delay_between_launches_seconds = 0
 
 # launch a thread for each account specified in .env
+img_thread = threading.Thread(target=image_updater, args=(image_event,))
+img_thread.start()
 for i in range(num_credentials):
     # run the image drawing task
     access_tokens.append(None)
     access_token_expires_at_timestamp.append(math.floor(time.time()))
-    thread1 = threading.Thread(target=task, args=[i])
+    thread1 = threading.Thread(target=task, args=(i,image_event,))
     thread1.start()
     time.sleep(delay_between_launches_seconds)
