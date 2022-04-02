@@ -160,7 +160,6 @@ def set_pixel_and_check_ratelimit(
     }
 
     response = requests.request("POST", url, headers=headers, data=payload)
-    print(response.json())
     if verbose:
         print("received response: ", response.text)
     # There are 2 different JSON keys for responses to get the next timestamp.
