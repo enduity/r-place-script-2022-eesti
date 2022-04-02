@@ -128,6 +128,9 @@ def closest_color(target_rgb, rgb_colors_array_in):
 def set_pixel_and_check_ratelimit(
     access_token_in, x, y, color_index_in=18, canvas_index=0
 ):
+    while x > 999:
+        canvas_index += 1
+        x-=1000
     print("placing " + color_id_to_name(color_index_in) + " pixel at " + str((x, y)))
 
     url = "https://gql-realtime-2.reddit.com/query"
@@ -157,12 +160,14 @@ def set_pixel_and_check_ratelimit(
     }
 
     response = requests.request("POST", url, headers=headers, data=payload)
+    print(response.json())
     if verbose:
         print("received response: ", response.text)
     # There are 2 different JSON keys for responses to get the next timestamp.
     # If we don't get data, it means we've been rate limited.
     # If we do, a pixel has been successfully placed.
     if response.json()["data"] == None:
+        
         waitTime = math.floor(
             response.json()["errors"][0]["extensions"]["nextAvailablePixelTs"]
         )
