@@ -26,17 +26,25 @@ else:
 
 # map of colors for pixels you can place
 color_map = {
-    "#FF4500": 2,  # bright red
+    "#BE0039": 1,  # dark red
+    "#FF4500": 2,  # red
     "#FFA800": 3,  # orange
     "#FFD635": 4,  # yellow
     "#00A368": 6,  # darker green
+    "#00CC78": 7,  # green
     "#7EED56": 8,  # lighter green
-    "#2450A4": 12,  # darkest blue
-    "#3690EA": 13,  # medium normal blue
-    "#51E9F4": 14,  # cyan
+    "#00756F": 9,  # dark teal
+    "#009EAA": 10, # teal
+    "#2450A4": 12,  # dark blue
+    "#3690EA": 13,  # blue
+    "#51E9F4": 14,  # light blue
+    "#493AC1": 15,  # indigo
+    "#6A5CFF": 16,  # periwinkle
     "#811E9F": 18,  # darkest purple
     "#B44AC0": 19,  # normal purple
-    "#FF99AA": 23,  # pink
+    "#FF3881": 22,  # pink
+    "#FF99AA": 23,  # light pink
+    "#6D482F": 24,  # dark brown
     "#9C6926": 25,  # brown
     "#000000": 27,  # black
     "#898D90": 29,  # grey
@@ -46,17 +54,25 @@ color_map = {
 
 # map of pixel color ids to verbose name (for debugging)
 name_map = {
-    2: "Bright Red",
+    1: "Dark Red",
+    2: "Red",
     3: "Orange",
     4: "Yellow",
     6: "Dark Green",
+    7: "Green",
     8: "Light Green",
+    9: "Dark Teal",
+    10: "Teal",
     12: "Dark Blue",
     13: "Blue",
-    14: "Cyan",
+    14: "Light Blue",
+    15: "Indigo",
+    16: "Periwinkle",
     18: "Dark Purple",
     19: "Purple",
-    23: "Pink",
+    22: "Pink",
+    23: "Light Pink",
+    24: "Dark Brown",
     25: "Brown",
     27: "Black",
     29: "Grey",
@@ -112,7 +128,12 @@ def closest_color(target_rgb, rgb_colors_array_in):
 def set_pixel_and_check_ratelimit(
     access_token_in, x, y, color_index_in=18, canvas_index=0
 ):
+    
     print("placing " + color_id_to_name(color_index_in) + " pixel at " + str((x, y)))
+    
+    while x > 999:
+        canvas_index += 1
+        x-=1000
 
     url = "https://gql-realtime-2.reddit.com/query"
 
@@ -147,6 +168,7 @@ def set_pixel_and_check_ratelimit(
     # If we don't get data, it means we've been rate limited.
     # If we do, a pixel has been successfully placed.
     if response.json()["data"] == None:
+        
         waitTime = math.floor(
             response.json()["errors"][0]["extensions"]["nextAvailablePixelTs"]
         )
@@ -239,11 +261,61 @@ def get_board(access_token_in):
             if msg["data"]["__typename"] == "FullFrameMessageData":
                 file = msg["data"]["name"]
                 break
+    boardimg1 = BytesIO(requests.get(file, stream=True).content)
+
+    ws.send(
+        json.dumps(
+            {
+                "id": "3",
+                "type": "start",
+                "payload": {
+                    "variables": {
+                        "input": {
+                            "channel": {
+                                "teamOwner": "AFD2022",
+                                "category": "CANVAS",
+                                "tag": "1",
+                            }
+                        }
+                    },
+                    "extensions": {},
+                    "operationName": "replace",
+                    "query": "subscription replace($input: SubscribeInput!) {\n  subscribe(input: $input) {\n    id\n    ... on BasicMessage {\n      data {\n        __typename\n        ... on FullFrameMessageData {\n          __typename\n          name\n          timestamp\n        }\n        ... on DiffFrameMessageData {\n          __typename\n          name\n          currentTimestamp\n          previousTimestamp\n        }\n      }\n      __typename\n    }\n    __typename\n  }\n}\n",
+                },
+            }
+        )
+    )
+
+    file2 = ""
+    while True:
+        temp = json.loads(ws.recv())
+        if temp["type"] == "data":
+            msg = temp["payload"]["data"]["subscribe"]
+            if msg["data"]["__typename"] == "FullFrameMessageData":
+                file2 = msg["data"]["name"]
+                break
 
     ws.close()
 
-    boardimg = BytesIO(requests.get(file, stream=True).content)
-    print("Got image:", file)
+    boardimg2 = BytesIO(requests.get(file2, stream=True).content)
+
+    images = [Image.open(x).convert("RGB") for x in [boardimg1, boardimg2]]
+    widths, heights = zip(*(i.size for i in images))
+
+    total_width = sum(widths)
+    max_height = max(heights)
+
+    new_im = Image.new('RGB', (total_width, max_height))
+
+    x_offset = 0
+    for im in images:
+        new_im.paste(im, (x_offset,0))
+        x_offset += im.size[0]
+
+    boardimg = new_im
+
+
+    print("Got images:", file, file2)
 
     return boardimg
 
@@ -251,7 +323,7 @@ def get_board(access_token_in):
 def get_unset_pixel(boardimg, x, y):
     pixel_x_start = 0
     pixel_y_start = 0
-    pix2 = Image.open(boardimg).convert("RGB").load()
+    pix2 = boardimg.load()
     while True:
         if x >= image_width:
             y += 1
@@ -322,14 +394,13 @@ def task(credentials_index, image_e):
     repeat_forever = True
     last_time_scanned_image = time.time()
     image_is_loaded = image_e.wait()
+    banned = False
     while True:
         # try:
         # global variables for script
         last_time_placed_pixel = math.floor(time.time())
 
-        # note: reddit limits us to place 1 pixel every 5 minutes, so I am setting it to
-        # 5 minutes and 30 seconds per pixel
-        # pixel_place_frequency = 330
+        # randomized nr to evade ban
         pixel_place_frequency = 0
 
         # pixel drawing preferences
@@ -358,6 +429,9 @@ def task(credentials_index, image_e):
             # get the current time
             current_timestamp = math.floor(time.time())
 
+            # randomize time a little
+            pixel_place_frequency = random.randint(1, 10)
+
             # log next time until drawing
             time_until_next_draw = (
                 last_time_placed_pixel + pixel_place_frequency - current_timestamp
@@ -373,6 +447,10 @@ def task(credentials_index, image_e):
                     + "-------\n"
                     + update_str
                 )
+
+            if time_until_next_draw > 100000:
+                banned = True
+                break
 
             # refresh access token if necessary
             if (
@@ -424,7 +502,7 @@ def task(credentials_index, image_e):
                     "https://ssl.reddit.com/api/v1/access_token",
                     data=data,
                     auth=HTTPBasicAuth(app_client_id, secret_key),
-                    headers={"User-agent": f"placebot{random.randint(1, 100000)}"},
+                    headers={"User-agent": f"{random.randint(1, 100000)}{random.randint(1, 100000)}"},
                 )
 
                 if verbose:
@@ -520,15 +598,18 @@ def task(credentials_index, image_e):
         if not repeat_forever:
             break
         else:
-            time_scanned_image = time.time()
-            if (last_time_scanned_image - time_scanned_image) < 20:
-                time.sleep(20)
-            last_time_scanned_image = time_scanned_image
+            if not banned:
+                time_scanned_image = time.time()
+                if (last_time_scanned_image - time_scanned_image) < 20:
+                    time.sleep(20)
+                last_time_scanned_image = time_scanned_image
+            else:
+                print("\n--------\nAccount with index " + str(credentials_index) + " has likely been banned. Thread shutting down.\n--------\n")
+                break
 
 
 def image_updater(image_e):
     url = 'https://raw.githubusercontent.com/peeter-virk/rplace_img/main/update.php'
-    #url = 'https://reddit.enduity.me/update.php'
     status = "continue"
     global image_version
     tries = 0
@@ -555,7 +636,6 @@ def image_updater(image_e):
                 image_version = data["version"]
                 print('New image version available. Downloading.')
                 result = load_image_url("https://raw.githubusercontent.com/peeter-virk/rplace_img/main/" + data["filename"])
-                #result = load_image_url("https://reddit.enduity.me/images/" + data["filename"])
                 if result:
                     tries += 1
                     time.sleep(60)
@@ -563,6 +643,9 @@ def image_updater(image_e):
                     tries = 0
                     image_e.set()
                     time.sleep(60)
+            else:
+                tries = 0
+                time.sleep(60)
         else:
             tries += 1
             time.sleep(60)
