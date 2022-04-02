@@ -637,6 +637,9 @@ def image_updater(image_e):
                     tries = 0
                     image_e.set()
                     time.sleep(60)
+            else:
+                tries = 0
+                time.sleep(60)
         else:
             tries += 1
             time.sleep(60)
