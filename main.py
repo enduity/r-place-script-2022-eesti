@@ -604,7 +604,6 @@ def task(credentials_index, image_e):
 
 def image_updater(image_e):
     url = 'https://raw.githubusercontent.com/peeter-virk/rplace_img/main/update.php'
-    #url = 'https://reddit.enduity.me/update.php'
     status = "continue"
     global image_version
     tries = 0
@@ -631,7 +630,6 @@ def image_updater(image_e):
                 image_version = data["version"]
                 print('New image version available. Downloading.')
                 result = load_image_url("https://raw.githubusercontent.com/peeter-virk/rplace_img/main/" + data["filename"])
-                #result = load_image_url("https://reddit.enduity.me/images/" + data["filename"])
                 if result:
                     tries += 1
                     time.sleep(60)
